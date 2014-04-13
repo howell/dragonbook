@@ -21,7 +21,8 @@ data NFA = NFA { start :: StateLabel,
 move :: NFA -> Alphabet -> StateLabel -> [StateLabel]
 move nfa s current
     | Just ts <- M.lookup current (transitions nfa) = fromMaybe [] $ lookup s ts
-    | otherwise = error $ "unknown state " ++ show current
+    | otherwise = []
+    -- | otherwise = error $ "unknown state " ++ show current
 
 epsilonClosure :: NFA -> StateLabel -> [StateLabel]
 epsilonClosure nfa start = S.toList $ go (S.singleton start)
@@ -37,7 +38,9 @@ moveNFA :: NFA -> [StateLabel] -> Alphabet -> [StateLabel]
 moveNFA nfa curr s = nub $ concatMap (move nfa s) curr >>= epsilonClosure nfa
 
 runNFA :: NFA -> [Alphabet] -> [StateLabel]
-runNFA nfa syms = foldl' (moveNFA nfa) [start nfa] syms
+runNFA nfa syms = foldl' (moveNFA nfa) startState syms
+    where
+        startState = epsilonClosure nfa (start nfa)
 
 accepts :: NFA -> [Alphabet] -> Bool
 nfa `accepts` s = any (`elem` accepting nfa) $ runNFA nfa s
