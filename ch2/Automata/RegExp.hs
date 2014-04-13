@@ -2,6 +2,7 @@ module RegExp where
 
 import Automata
 import qualified Data.Map as M
+import Control.Monad.State
 
 data RegExp = Sym Alphabet
             | Cat RegExp RegExp
@@ -9,46 +10,61 @@ data RegExp = Sym Alphabet
             | Kleene RegExp deriving (Eq, Show)
 
 toNFA :: RegExp -> NFA
-toNFA (Sym s) = NFA { start = 0,
-                      transitions = M.fromList [(0, [(s, [1])])],
-                      accepting = [1] }
-toNFA _ = undefined
+toNFA = flip evalState 0 . convert
 
-convert :: Int -> RegExp -> (NFA, Int)
-convert x (Sym s) = (NFA { start = x,
-                           transitions = M.fromList [(x, [(s, [x + 1])])],
-                           accepting = [x + 1] }, x + 2)
-convert x (Cat a b) =
-        let (nfaA, x') = convert x a
-            (nfaB, x'') = convert x' b
-            link = [(Epsilon, [start nfaB])]
-            trans' = M.insertWith (++) (head (accepting nfaA)) link $ transitions nfaA
-            in
-                (NFA { start = start nfaA,
-                     transitions = M.union trans' (transitions nfaB),
-                     accepting = accepting nfaB }, x'')
-convert x (Or a b) =
-        let (nfaA, x') = convert x a
-            (nfaB, x'') = convert x' b
+type LabelState = State Int
+
+getLabel :: LabelState Int
+getLabel = do
+        label <- get
+        modify (+1)
+        return label
+
+convert :: RegExp -> LabelState NFA
+convert (Sym s) = do
+        newStart <- getLabel
+        newStop  <- getLabel
+        return NFA { start = newStart,
+                     transitions = M.fromList [(newStart, [(s, [newStop])])],
+                     accepting = [newStop] }
+convert (Cat a b) = do
+        nfaA <- convert a
+        nfaB <- convert b
+        let link   = [(Epsilon, [start nfaB])]
             acceptA = head $ accepting nfaA
+            trans' = M.insertWith (++) acceptA link $ transitions nfaA
+        return NFA { start = start nfaA,
+                     transitions = M.union trans' (transitions nfaB),
+                     accepting = accepting nfaB }
+convert (Or a b) = do
+        nfaA <- convert a
+        nfaB <- convert b
+        start' <- getLabel
+        accept'  <- getLabel
+        let acceptA = head $ accepting nfaA
             acceptB = head $ accepting nfaB
-            newStart = M.fromList [(x'', [(Epsilon, [start nfaA, start nfaB])])]
-            newStop = M.fromList [(acceptA, [(Epsilon, [x'' + 1])]),
-                                  (acceptB, [(Epsilon, [x''+ 1])])]
-            in
-                (NFA { start = x'',
-                       transitions = M.unionsWith (++) [transitions nfaA,
-                                                        transitions nfaB,
-                                                        newStart,
-                                                        newStop],
-                       accepting = [x'' + 1] }, x'' + 2)
-convert x (Kleene a) =
-        let (nfa, x') = convert x a
-            prevAccept = head $ accepting nfa
-            trans' = M.fromList [(x', [(Epsilon, [start nfa, x' + 1])]),
-                                 (prevAccept, [(Epsilon, [start nfa, x' + 1])])]
-            in
-                (NFA { start = x',
+            startTrans = M.fromList [(newStart,
+                                    [(Epsilon, [start nfaA, start nfaB])])]
+            acceptTrans = M.fromList [(acceptA, [(Epsilon, [newStop])]),
+                                      (acceptB, [(Epsilon, [newStop])])]
+            newStart = M.fromList [(start',
+                                  [(Epsilon, [start nfaA, start nfaB])])]
+            newStop = M.fromList [(acceptA, [(Epsilon, [accept'])]),
+                                  (acceptB, [(Epsilon, [accept'])])]
+        return NFA { start = start',
+                     transitions = M.unionsWith (++) [transitions nfaA,
+                                                     transitions nfaB,
+                                                     newStart,
+                                                     newStop],
+                     accepting = [accept'] }
+convert (Kleene a) = do
+        nfa <- convert a
+        start' <- getLabel
+        accept' <- getLabel
+        let accept = head $ accepting nfa
+            trans' = M.fromList [(start', [(Epsilon, [start nfa, accept'])]),
+                                 (accept, [(Epsilon, [start nfa,accept'])])]
+        return NFA { start = start',
                        transitions = M.unionWith (++) trans' (transitions nfa),
-                       accepting = [x' + 1] }, x' + 2)
+                       accepting = [accept'] }
 
